@@ -325,6 +325,21 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     });
   }
 
+  /// Expose quick monitoring to parent callers (e.g., map screen).
+  /// Starts monitoring if not running, otherwise triggers an immediate scan.
+  Future<void> startQuickMonitoringFromParent() async {
+    if (!mounted) return;
+
+    if (!_isQuickMonitoring) {
+      await _performScan(); // immediate reading
+      _quickScanAndSelect(); // start 500ms monitoring loop
+    } else {
+      if (!_isScanning) {
+        await _performScan();
+      }
+    }
+  }
+
   void _onDatasetSelected(String key) {
     if (key == _selectedDatasetKey && key != _memoryKey) {
       return;
@@ -877,4 +892,3 @@ class _MatchDetails extends StatelessWidget {
     );
   }
 }
-

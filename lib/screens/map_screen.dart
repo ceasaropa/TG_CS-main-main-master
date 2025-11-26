@@ -45,6 +45,7 @@ import '../fingerprint/fingerprint_training_screen.dart';
 import '../fingerprint/fingerprint_online_screen.dart';
 import '../fingerprint/fingerprint_repository.dart';
 import '../fingerprint/fingerprint_sample.dart';
+import '../fingerprint/fingerprint_matcher.dart';
 
 const String kMapAssetPath = 'assets/planta1.png';
 const double kPixelsPerMeter = 39.51; // Imagen calibrada a 39.51 px por metro
@@ -220,6 +221,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   double? _knnDistance;
   bool _showHeadingPointer = false;
   bool _isCalculatingRoute = false;
+  bool _isAddingPOIMode = false;
+  final GlobalKey _fingerprintKey = GlobalKey();
 
   // Arrow positioning and animation
   ArrowState? _currentArrowState;
@@ -246,6 +249,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   static const double _headingSmoothingAlpha = 0.15;
   static const double _headingDeadband = 0.5 * math.pi / 180; // 0.5 degrees
   double? _magNormReference;
+  String _pendingPOIIconKey = 'info';
+  String? _pendingPOIName;
+  String? _pendingPOIDescription;
+  final List<POI> _userPOIs = [];
+  static const Map<String, IconData> _poiIconOptions = {
+    'info': Icons.info,
+    'flag': Icons.flag,
+    'home': Icons.home,
+    'star': Icons.star,
+    'medical': Icons.local_hospital,
+    'school': Icons.school,
+    'place': Icons.place,
+  };
 
   @override
   void initState() {
@@ -551,11 +567,226 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         return false;
       }
 
+      if (poi.iconKey.isEmpty) {
+        debugPrint('POI has empty icon key');
+        return false;
+      }
+
       return true;
     } catch (e) {
       debugPrint('POI data validation failed: $e');
       return false;
     }
+  }
+
+  IconData _iconForPOI(POI poi) {
+    return _poiIconOptions[poi.iconKey] ?? Icons.place;
+  }
+
+  Future<void> _openAddPOIDialog() async {
+    if (!_initContext.gridInitialized) {
+      _showUserMessage('La grilla no esta lista', Colors.orange);
+      return;
+    }
+
+    final nameController = TextEditingController(text: _pendingPOIName ?? '');
+    final descController =
+        TextEditingController(text: _pendingPOIDescription ?? '');
+    String iconKey = _pendingPOIIconKey;
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Nuevo punto de interes'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: descController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Descripcion',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: iconKey,
+                    decoration: const InputDecoration(
+                      labelText: 'Icono',
+                    ),
+                    items:
+                        _poiIconOptions.entries
+                            .map(
+                              (entry) => DropdownMenuItem<String>(
+                                value: entry.key,
+                                child: Row(
+                                  children: [
+                                    Icon(entry.value, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(entry.key),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        iconKey = value;
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(
+                    context,
+                    {
+                      'name': nameController.text.trim(),
+                      'description': descController.text.trim(),
+                      'iconKey': iconKey,
+                    },
+                  );
+                },
+                child: const Text('Elegir punto en el mapa'),
+              ),
+            ],
+          ),
+    );
+
+    if (result == null) return;
+
+    final name = result['name']?.trim() ?? '';
+    final description = result['description']?.trim() ?? '';
+    final selectedIcon = result['iconKey'] ?? 'info';
+
+    if (name.isEmpty) {
+      _showUserMessage('Ponle nombre al punto', Colors.orange);
+      return;
+    }
+
+    setState(() {
+      _pendingPOIName = name;
+      _pendingPOIDescription = description;
+      _pendingPOIIconKey = selectedIcon;
+      _isAddingPOIMode = true;
+    });
+
+    _showUserMessage('Toca el mapa para ubicar el POI', Colors.blue);
+  }
+
+  void _handleAddPOITap(LatLng latlng) {
+    if (!_isAddingPOIMode) return;
+
+    try {
+      final cell = latLngToGrid(latlng);
+      if (!_isCellWithinGrid(cell)) {
+        _showUserMessage('El punto esta fuera del mapa', Colors.red);
+        return;
+      }
+
+      final poi = POI(
+        cell: cell,
+        name: _pendingPOIName ?? 'POI sin nombre',
+        description: _pendingPOIDescription ?? '',
+        iconKey: _pendingPOIIconKey,
+      );
+
+      if (!_validatePOIData(poi)) {
+        _showUserMessage('No se pudo validar el POI', Colors.orange);
+        return;
+      }
+
+      setState(() {
+        pointsOfInterest.add(poi);
+        _userPOIs.add(poi);
+        visiblePOIs = [...visiblePOIs, poi];
+        _isAddingPOIMode = false;
+        _pendingPOIName = null;
+        _pendingPOIDescription = null;
+      });
+
+      _showUserMessage('POI agregado', Colors.green);
+    } catch (e) {
+      debugPrint('Error adding POI: $e');
+      _showUserMessage('Error agregando el POI: $e', Colors.red);
+    }
+  }
+
+  void _onFingerprintMatchUpdated(FingerprintMatcherResult? result) {
+    try {
+      if (!mounted) return;
+      setState(() {
+        if (result == null) {
+          _knnLatLng = null;
+          _knnDistance = null;
+          return;
+        }
+
+        final latlng = _fingerprintToLatLng(result.best.position);
+        _knnLatLng = latlng;
+        _knnDistance = result.distance;
+      });
+    } catch (e) {
+      debugPrint('Error handling fingerprint match: $e');
+    }
+  }
+
+  bool _isKnnStartReady() {
+    return _knnLatLng != null && _knnDistance != null && _knnDistance! < 130;
+  }
+
+  Future<void> _startRouteFromKnn() async {
+    try {
+      final dynamic fingerprintState = _fingerprintKey.currentState;
+      if (fingerprintState != null &&
+          fingerprintState.startQuickMonitoringFromParent != null) {
+        await fingerprintState.startQuickMonitoringFromParent();
+        // Small wait to let the new scan update kNN result
+        await Future.delayed(const Duration(milliseconds: 600));
+      }
+    } catch (e) {
+      debugPrint('No se pudo iniciar escaneo rapido: $e');
+    }
+
+    if (!_isKnnStartReady()) {
+      _showUserMessage('No hay huella cercana (<130)', Colors.orange);
+      return;
+    }
+
+    if (goalPoint == null) {
+      _showUserMessage('Selecciona un destino en el mapa', Colors.orange);
+      return;
+    }
+
+    setState(() {
+      startPoint = _knnLatLng;
+      selectingStart = false;
+      _currentPosition = _knnLatLng;
+      path = [];
+      _lastDistanceToGoalMeters = null;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      calculatePath();
+    });
+
+    _showUserMessage('Origen fijado desde huella cercana', Colors.green);
   }
 
   // Project Cesar - Global Sensor Manager
@@ -906,6 +1137,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 child: Padding(
                   padding: const EdgeInsets.all(8),
                   child: FingerprintOnlineScreen(
+                    key: _fingerprintKey,
                     embedded: true,
                     useExternalMap: true,
                     repository: _fingerprintRepository,
@@ -916,6 +1148,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     onSampleSelected: (sample) {
                       _onFingerprintSelected(sample, center: true);
                     },
+                    onMatchUpdated: _onFingerprintMatchUpdated,
                   ),
                 ),
               ),
@@ -998,6 +1231,51 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _isKnnStartReady()
+                        ? Colors.green.withOpacity(0.8)
+                        : Colors.grey.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _knnDistance == null
+                        ? 'Huella: sin dato'
+                        : 'Huella kNN: ${_knnDistance!.toStringAsFixed(1)}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _isKnnStartReady() ? _startRouteFromKnn : null,
+                  icon: const Icon(Icons.my_location),
+                  label: const Text('Usar huella como origen'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _openAddPOIDialog,
+                  icon: const Icon(Icons.add_location_alt),
+                  label: Text(
+                    _isAddingPOIMode
+                        ? 'Selecciona punto en mapa'
+                        : 'Agregar POI',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        _isAddingPOIMode ? Colors.orange : Colors.blue,
+                    foregroundColor: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -1155,6 +1433,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             goalPoint = null;
             path = [];
             _lastDistanceToGoalMeters = null;
+            _isAddingPOIMode = false;
+            _pendingPOIName = null;
+            _pendingPOIDescription = null;
             selectingStart = true;
             // Clear visited cells when refreshing the map
             visitedCells.clear();
@@ -1301,7 +1582,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
         setState(() {
           path = latLngPath;
-          visiblePOIs = newVisiblePOIs;
+          visiblePOIs = [...newVisiblePOIs, ..._userPOIs];
           _lastDistanceToGoalMeters = null;
         });
 
@@ -2036,6 +2317,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 return;
               }
 
+              if (_isAddingPOIMode) {
+                _handleAddPOITap(latlng);
+                return;
+              }
+
               if (selectingStart) {
                 setState(() {
                   startPoint = latlng;
@@ -2153,18 +2439,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                   _showPOIDialog(poi);
                                 },
                                 child: RepaintBoundary(
-                                  child:
-                                      _initContext.animationsEnabled
-                                          ? const Icon(
-                                            Icons.info,
-                                            color: Colors.deepPurpleAccent,
-                                            size: 28,
-                                          ) // OptimizedAnimatedPOIIcon()
-                                          : const Icon(
-                                            Icons.info,
-                                            color: Colors.deepPurpleAccent,
-                                            size: 28,
-                                          ),
+                                  child: Icon(
+                                    _iconForPOI(poi),
+                                    color: Colors.deepPurpleAccent,
+                                    size: 28,
+                                  ),
                                 ),
                               ),
                             );
