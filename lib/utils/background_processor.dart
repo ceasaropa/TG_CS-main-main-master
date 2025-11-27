@@ -15,17 +15,23 @@ class BackgroundProcessor {
   Isolate? _processingIsolate;
   SendPort? _sendPort;
   ReceivePort? _receivePort;
+  StreamSubscription<dynamic>? _receiveSubscription;
   bool _isInitialized = false;
+  bool _isInitializing = false;
   
   final Map<String, Completer<dynamic>> _pendingOperations = {};
   int _operationCounter = 0;
 
   Future<void> initialize() async {
-    if (_isInitialized) return;
+    if (_isInitialized || _isInitializing) return;
 
     try {
+      _isInitializing = true;
       PerformanceMonitor.instance.recordEvent('background_processor_init_start');
       
+      // Reset any previous ports/subscriptions in case of failed init
+      await _receiveSubscription?.cancel();
+      _receivePort?.close();
       _receivePort = ReceivePort();
       
       // Crear isolate para procesamiento en background
@@ -35,7 +41,7 @@ class BackgroundProcessor {
       );
 
       // Configurar listener para mensajes del isolate
-      _receivePort!.listen(_handleIsolateMessage);
+      _receiveSubscription = _receivePort!.listen(_handleIsolateMessage);
       
       // Esperar confirmación de inicialización
       await _sendCommand('init', null);
@@ -52,6 +58,8 @@ class BackgroundProcessor {
         print('Failed to initialize BackgroundProcessor: $e');
       }
       rethrow;
+    } finally {
+      _isInitializing = false;
     }
   }
 
@@ -570,7 +578,11 @@ class BackgroundProcessor {
   void dispose() {
     _pendingOperations.clear();
     _processingIsolate?.kill();
+    _receiveSubscription?.cancel();
     _receivePort?.close();
+    _receiveSubscription = null;
+    _receivePort = null;
+    _sendPort = null;
     _isInitialized = false;
     
     PerformanceMonitor.instance.recordEvent('background_processor_disposed');

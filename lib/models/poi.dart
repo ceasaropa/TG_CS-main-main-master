@@ -21,4 +21,12 @@ class POI {
       iconKey: json['iconKey'] ?? 'info',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'x': cell.x,
+        'y': cell.y,
+        'name': name,
+        'description': description,
+        'iconKey': iconKey,
+      };
 }

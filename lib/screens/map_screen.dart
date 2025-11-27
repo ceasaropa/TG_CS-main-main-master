@@ -16,8 +16,6 @@ import 'package:flutter/services.dart';
 
 // For working with .json
 import 'dart:convert';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import '../models/poi.dart';
 import '../obst/obstacles_repository.dart';
@@ -38,6 +36,8 @@ import '../models/sensor_states.dart';
 import '../widgets/orientation/orientation_arrow_widget.dart';
 import '../widgets/orientation/orientation_cone_config.dart';
 import '../widgets/orientation/cone_path_cache.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 // Navigation import
 import 'home_screen.dart';
@@ -192,10 +192,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Set<Point<int>> obstacles = {};
 
-  // Modo temporal para bloquear rapidamente una linea de celdas como obstaculos
-  bool _isObstacleLineMode = false;
-  Point<int>? _obstacleLineStart;
-
   final ObstaclesRepository _obstaclesRepo = ObstaclesRepository();
 
   final MapController _mapController = MapController();
@@ -227,6 +223,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // Arrow positioning and animation
   ArrowState? _currentArrowState;
   late MapGridConverter _gridConverter;
+  bool _gridConverterReady = false;
   LatLng? _arrowStartPosition;
   List<ArrowState> _arrowPath = [];
   Timer? _arrowUpdateTimer;
@@ -284,17 +281,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       // Step 1: Grid metrics calculation (Critical)
       await _initializeGridMetrics();
 
-      // Step 2: Load obstacles (Optional)
+      // Step 2: Initialize grid converter (must precede map usage)
+      await _initializeGridConverter();
+
+      // Step 3: Load obstacles (Optional)
       await _initializeObstacles();
 
-      // Step 3: Load POIs (Optional)
+      // Step 4: Load POIs (Optional)
       await _initializePOIs();
 
-      // Step 4: Initialize global sensor manager (Optional but important)
+      // Step 5: Initialize global sensor manager (Optional but important)
       await _initializeGlobalSensorManager();
-
-      // Step 5: Initialize grid converter
-      await _initializeGridConverter();
 
       // Step 6: Initialize animations (Optional)
       await _initializeAnimations();
@@ -440,9 +437,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         fixedRows: numRows,
       );
       debugPrint('Grid converter initialized successfully');
+      _gridConverterReady = true;
     } catch (e) {
       _initContext.addError('Grid converter initialization failed: $e');
       debugPrint('WARNING: Grid converter initialization failed: $e');
+      _gridConverterReady = false;
     }
   }
 
@@ -690,7 +689,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _showUserMessage('Toca el mapa para ubicar el POI', Colors.blue);
   }
 
-  void _handleAddPOITap(LatLng latlng) {
+  Future<void> _handleAddPOITap(LatLng latlng) async {
     if (!_isAddingPOIMode) return;
 
     try {
@@ -720,6 +719,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _pendingPOIName = null;
         _pendingPOIDescription = null;
       });
+
+      await _saveUserPOIs();
 
       _showUserMessage('POI agregado', Colors.green);
     } catch (e) {
@@ -907,6 +908,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       if (positionState.isValid && positionState.accuracy > 0.1) {
         // Calculate new arrow state with smooth animation and compass data
+        if (!_gridConverterReady) return;
         final newArrowState = _gridConverter.calculateArrowState(
           positionState,
           _arrowStartPosition!,
@@ -1265,6 +1267,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
+                  onPressed: () async {
+                    await _saveUserPOIs();
+                    _showUserMessage(
+                      'POIs guardados en el dispositivo',
+                      Colors.green,
+                    );
+                  },
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar POIs'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueGrey,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
                   onPressed: _openAddPOIDialog,
                   icon: const Icon(Icons.add_location_alt),
                   label: Text(
@@ -1278,42 +1296,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     foregroundColor: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: _toggleObstacleLineMode,
-                  icon: Icon(
-                    _isObstacleLineMode ? Icons.block : Icons.timeline,
-                  ),
-                  label: Text(
-                    _isObstacleLineMode
-                        ? 'Bloqueo A-B activo'
-                        : 'Bloquear obstaculos A-B',
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        _isObstacleLineMode ? Colors.redAccent : Colors.black54,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-                if (_isObstacleLineMode) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      _obstacleLineStart == null
-                          ? 'Toca el mapa para marcar nodo A'
-                          : 'A = (${_obstacleLineStart!.x}, ${_obstacleLineStart!.y}), toca nodo B',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.redAccent,
-                      ),
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
                   onPressed: () {
@@ -1450,6 +1432,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   Point<int> latLngToGrid(LatLng point) {
+    if (!_gridConverterReady) {
+      throw StateError('Grid converter not ready');
+    }
     final gridCoords = _gridConverter.latLngToGrid(point);
     return Point(gridCoords['gridX']!.toInt(), gridCoords['gridY']!.toInt());
   }
@@ -1462,10 +1447,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   LatLng gridToLatLng(Node node) {
+    if (!_gridConverterReady) {
+      throw StateError('Grid converter not ready');
+    }
     return _gridConverter.gridCoordsToLatLng(node.row, node.col);
   }
 
   List<LatLng> getCellPolygon(int row, int col) {
+    if (!_gridConverterReady) {
+      return [];
+    }
     return _gridConverter.getGridCellPolygon(row, col);
   }
 
@@ -1776,24 +1767,28 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   /// Simple viewport culling helper methods
-  LatLngBounds _getVisibleBounds() {
-    final camera = _mapController.camera;
-    final bounds = camera.visibleBounds;
-    const double padding = 0.1;
+  LatLngBounds? _getVisibleBounds() {
+    try {
+      final bounds = _mapController.camera.visibleBounds;
+      const double padding = 0.1;
 
-    final latSpan = bounds.north - bounds.south;
-    final lngSpan = bounds.east - bounds.west;
+      final latSpan = bounds.north - bounds.south;
+      final lngSpan = bounds.east - bounds.west;
 
-    return LatLngBounds(
-      LatLng(
-        bounds.south - (latSpan * padding),
-        bounds.west - (lngSpan * padding),
-      ),
-      LatLng(
-        bounds.north + (latSpan * padding),
-        bounds.east + (lngSpan * padding),
-      ),
-    );
+      return LatLngBounds(
+        LatLng(
+          bounds.south - (latSpan * padding),
+          bounds.west - (lngSpan * padding),
+        ),
+        LatLng(
+          bounds.north + (latSpan * padding),
+          bounds.east + (lngSpan * padding),
+        ),
+      );
+    } catch (_) {
+      // If camera isn't ready yet, return null so callers can skip rendering
+      return null;
+    }
   }
 
   bool _isPointVisible(LatLng point, LatLngBounds visibleBounds) {
@@ -1847,19 +1842,26 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     try {
       final visibleBounds = _getVisibleBounds();
 
-      // Calculate visible range
-      final startRow = ((visibleBounds.south - startBounds.latitude) / latStep)
-          .floor()
-          .clamp(0, numRows);
-      final endRow = ((visibleBounds.north - startBounds.latitude) / latStep)
-          .ceil()
-          .clamp(0, numRows);
-      final startCol = ((visibleBounds.west - startBounds.longitude) / lngStep)
-          .floor()
-          .clamp(0, numCols);
-      final endCol = ((visibleBounds.east - startBounds.longitude) / lngStep)
-          .ceil()
-          .clamp(0, numCols);
+      final startRow = visibleBounds == null
+          ? 0
+          : ((visibleBounds.south - startBounds.latitude) / latStep)
+              .floor()
+              .clamp(0, numRows);
+      final endRow = visibleBounds == null
+          ? numRows
+          : ((visibleBounds.north - startBounds.latitude) / latStep)
+              .ceil()
+              .clamp(0, numRows);
+      final startCol = visibleBounds == null
+          ? 0
+          : ((visibleBounds.west - startBounds.longitude) / lngStep)
+              .floor()
+              .clamp(0, numCols);
+      final endCol = visibleBounds == null
+          ? numCols
+          : ((visibleBounds.east - startBounds.longitude) / lngStep)
+              .ceil()
+              .clamp(0, numCols);
 
       // Add horizontal lines with LOD
       for (int row = startRow; row <= endRow; row += lod) {
@@ -1925,150 +1927,39 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return lines;
   }
 
-  // Calcula los puntos enteros entre dos celdas usando Bresenham
-  List<Point<int>> _getCellsOnLine(Point<int> start, Point<int> end) {
-    final points = <Point<int>>[];
-    var x0 = start.x;
-    var y0 = start.y;
-    final x1 = end.x;
-    final y1 = end.y;
-
-    final dx = (x1 - x0).abs();
-    final dy = (y1 - y0).abs();
-    final sx = x0 < x1 ? 1 : -1;
-    final sy = y0 < y1 ? 1 : -1;
-    var err = dx - dy;
-
-    while (true) {
-      points.add(Point<int>(x0, y0));
-      if (x0 == x1 && y0 == y1) break;
-      final e2 = 2 * err;
-      if (e2 > -dy) {
-        err -= dy;
-        x0 += sx;
-      }
-      if (e2 < dx) {
-        err += dx;
-        y0 += sy;
-      }
-    }
-
-    return points;
-  }
-
-  void _toggleObstacleLineMode() {
-    setState(() {
-      _isObstacleLineMode = !_isObstacleLineMode;
-      _obstacleLineStart = null;
-    });
-
-    _showUserMessage(
-      _isObstacleLineMode
-          ? 'Modo A-B activo: toca nodo A'
-          : 'Modo A-B desactivado',
-      _isObstacleLineMode ? Colors.redAccent : Colors.grey,
-    );
-  }
-
-  Future<void> _handleObstacleLineTap(LatLng latlng) async {
-    try {
-      if (!_initContext.gridInitialized) {
-        _showUserMessage('La grilla no esta lista para bloquear', Colors.orange);
-        return;
-      }
-
-      final cell = latLngToGrid(latlng);
-
-      if (_obstacleLineStart == null) {
-        setState(() {
-          _obstacleLineStart = cell;
-        });
-        _showUserMessage(
-          'Nodo A (${cell.x}, ${cell.y}) seleccionado. Ahora toca nodo B.',
-          Colors.orange,
-        );
-        return;
-      }
-
-      final startCell = _obstacleLineStart!;
-      final endCell = cell;
-      final lineCells = _getCellsOnLine(startCell, endCell)
-          .where(_isCellWithinGrid)
-          .toList();
-
-      if (lineCells.isEmpty) {
-        _showUserMessage('No se encontraron celdas para bloquear', Colors.red);
-        return;
-      }
-
-      setState(() {
-        for (final p in lineCells) {
-          obstacles.add(p);
-          grid[p.x][p.y].walkable = false;
-        }
-        _obstacleLineStart = null;
-      });
-
-      await saveObstacles();
-
-      _showUserMessage(
-        'Bloqueados ${lineCells.length} nodos entre A y B',
-        Colors.redAccent,
-      );
-    } catch (e) {
-      debugPrint('Error manejando linea de obstaculos: $e');
-      _showUserMessage('No se pudo bloquear la linea', Colors.red);
-    }
-  }
-
-  void toggleObstacle(LatLng latlng) async {
-    final cell = latLngToGrid(latlng);
-
-    setState(() {
-      if (obstacles.contains(cell)) {
-        // Unlock
-        obstacles.remove(cell);
-        grid[cell.x][cell.y].walkable = true;
-      } else {
-        // Block
-        obstacles.add(cell);
-        grid[cell.x][cell.y].walkable = false;
-      }
-    });
-
-    await saveObstacles();
-  }
-
-  // For working with .json
-  Future<void> saveObstacles() async {
-    try {
-      await _obstaclesRepo.save(obstacles);
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/obstacles.json');
-      print('Obstáculos guardados en: ${file.path}');
-    } catch (e) {
-      debugPrint('Error guardando obstáculos: $e');
-    }
-  }
-
   Future<void> loadObstacles() async {
     try {
-      final loaded = await _obstaclesRepo.load();
+      // Force reading from bundled asset to use packaged obstacle data
+      final loaded = await _obstaclesRepo.loadFromAssetOnly();
       if (mounted) {
         setState(() {
           obstacles = loaded;
+          if (_initContext.gridInitialized && grid.isNotEmpty) {
+            for (final obs in obstacles) {
+              if (obs.x >= 0 &&
+                  obs.x < grid.length &&
+                  obs.y >= 0 &&
+                  obs.y < grid[0].length) {
+                grid[obs.x][obs.y].walkable = false;
+              }
+            }
+          }
         });
       } else {
         obstacles = loaded;
+        if (_initContext.gridInitialized && grid.isNotEmpty) {
+          for (final obs in obstacles) {
+            if (obs.x >= 0 &&
+                obs.x < grid.length &&
+                obs.y >= 0 &&
+                obs.y < grid[0].length) {
+              grid[obs.x][obs.y].walkable = false;
+            }
+          }
+        }
       }
 
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/obstacles.json');
-      if (await file.exists()) {
-        print('Obstáculos cargados desde: ${file.path}');
-      } else {
-        print('Obstáculos cargados desde asset: assets/obst/obstacles.json');
-      }
+      debugPrint('Obstáculos cargados desde asset: assets/obst/obstacles.json');
     } catch (e) {
       debugPrint('Error cargando obstáculos: $e');
     }
@@ -2078,30 +1969,25 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Future<void> loadPOIsFromJson() async {
     try {
       final String jsonString = await rootBundle.loadString('assets/pois.json');
-      final List<dynamic> jsonList = json.decode(jsonString);
-
-      final List<POI> loadedPOIs = [];
-      for (final jsonItem in jsonList) {
-        try {
-          final poi = POI.fromJson(jsonItem);
-          // Validate POI before adding
-          if (_validatePOIData(poi)) {
-            loadedPOIs.add(poi);
-          } else {
-            debugPrint('Skipping invalid POI: ${jsonItem}');
-          }
-        } catch (e) {
-          debugPrint('Error parsing POI from JSON: $e, data: $jsonItem');
-        }
-      }
+      final assetPOIs = _decodePOIList(jsonString);
+      final userPois = await _loadUserPOIs();
+      final merged = [...assetPOIs, ...userPois];
 
       if (mounted) {
         setState(() {
-          pointsOfInterest = loadedPOIs;
+          pointsOfInterest = merged;
+          _userPOIs
+            ..clear()
+            ..addAll(userPois);
         });
+      } else {
+        pointsOfInterest = merged;
+        _userPOIs
+          ..clear()
+          ..addAll(userPois);
       }
       debugPrint(
-        'Successfully loaded ${pointsOfInterest.length} valid POIs out of ${jsonList.length} total',
+        'Loaded POIs: asset=${assetPOIs.length}, user=${userPois.length}, total=${pointsOfInterest.length}',
       );
     } catch (e) {
       debugPrint('Error loading POIs from JSON: $e');
@@ -2112,6 +1998,57 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         });
       }
       // Don't rethrow - POIs are optional
+    }
+  }
+
+  List<POI> _decodePOIList(String jsonString) {
+    final List<dynamic> jsonList = json.decode(jsonString);
+    final List<POI> loadedPOIs = [];
+    for (final jsonItem in jsonList) {
+      try {
+        final poi = POI.fromJson(jsonItem);
+        // Validate POI before adding
+        if (_validatePOIData(poi)) {
+          loadedPOIs.add(poi);
+        } else {
+          debugPrint('Skipping invalid POI: ${jsonItem}');
+        }
+      } catch (e) {
+        debugPrint('Error parsing POI from JSON: $e, data: $jsonItem');
+      }
+    }
+    return loadedPOIs;
+  }
+
+  Future<String> _userPOIPath() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return '${dir.path}/user_pois.json';
+  }
+
+  Future<void> _saveUserPOIs() async {
+    try {
+      final path = await _userPOIPath();
+      final file = File(path);
+      final jsonList = [...pointsOfInterest, ..._userPOIs].map((p) => p.toJson()).toList();
+      await file.writeAsString(jsonEncode(jsonList));
+      debugPrint('POIs guardados en: $path');
+    } catch (e) {
+      debugPrint('Error guardando POIs: $e');
+    }
+  }
+
+  Future<List<POI>> _loadUserPOIs() async {
+    try {
+      final path = await _userPOIPath();
+      final file = File(path);
+      if (!await file.exists()) {
+        return [];
+      }
+      final contents = await file.readAsString();
+      return _decodePOIList(contents);
+    } catch (e) {
+      debugPrint('Error cargando POIs de usuario: $e');
+      return [];
     }
   }
 
@@ -2193,6 +2130,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<Point<int>> _getVisibleObstacles() {
     try {
       final visibleBounds = _getVisibleBounds();
+      if (visibleBounds == null) return [];
       return obstacles.where((obstacle) {
         final latlng = gridToLatLng(Node(row: obstacle.x, col: obstacle.y));
         return _isPointVisible(latlng, visibleBounds);
@@ -2267,6 +2205,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<POI> _getVisiblePOIs() {
     try {
       final visibleBounds = _getVisibleBounds();
+      if (visibleBounds == null) return visiblePOIs;
       return visiblePOIs.where((poi) {
         final latlng = gridToLatLng(Node(row: poi.cell.x, col: poi.cell.y));
         return _isPointVisible(latlng, visibleBounds);
@@ -2279,7 +2218,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Widget _buildSafeFlutterMap() {
     // Check if initialization failed
-    if (_mapInitializationFailed || !_initContext.hasMinimalRequirements) {
+    if (_mapInitializationFailed ||
+        !_initContext.hasMinimalRequirements ||
+        !_gridConverterReady) {
       return _buildInitializationErrorUI();
     }
 
@@ -2308,12 +2249,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               // Handle calibration mode
               if (_isCalibrationMode) {
                 _handleCalibrationTap(latlng);
-                return;
-              }
-
-              // Modo temporal para bloquear una linea de obstaculos A-B
-              if (_isObstacleLineMode) {
-                _handleObstacleLineTap(latlng);
                 return;
               }
 
@@ -2361,11 +2296,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             }
           },
           onLongPress: (tapPosition, latlng) {
-            try {
-              toggleObstacle(latlng);
-            } catch (e) {
-              debugPrint('Error handling long press: $e');
-            }
+            // Long press no-op (obstacle editing disabled)
           },
         ),
         children: [
@@ -2397,29 +2328,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ),
 
           // Fingerprint sample markers (TRAINING DATA)
-          // Obstacle markers (OBSTACLE LAYER)
-          if (_initContext.obstaclesLoaded)
-            RepaintBoundary(
-              child: MarkerLayer(
-                markers: obstacles.map((point) {
-                  final latlng = gridToLatLng(
-                    Node(row: point.x, col: point.y),
-                  );
-                  return Marker(
-                    width: 6,
-                    height: 6,
-                    point: latlng,
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-
           // POI markers (INFORMATION LAYER)
           if (_initContext.poisLoaded)
             RepaintBoundary(
@@ -2872,6 +2780,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   List<Polygon> _buildSafePolygons() {
     try {
+      if (!_gridConverterReady) return [];
       List<Polygon> polygons = [];
 
       // Add visited cells with blue color

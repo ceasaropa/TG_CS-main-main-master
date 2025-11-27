@@ -16,19 +16,32 @@ class ObstaclesRepository {
     final dir = await getApplicationDocumentsDirectory();
     final localFile = File('${dir.path}/$_fileName');
 
-    List<dynamic> decoded;
-
     if (await localFile.exists()) {
       try {
         final contents = await localFile.readAsString();
-        decoded = jsonDecode(contents) as List<dynamic>;
-      } catch (e) {
-        decoded = await _loadFromAsset();
+        final decoded = jsonDecode(contents) as List<dynamic>;
+        return _decode(decoded);
+      } catch (_) {
+        // fall through to asset
       }
-    } else {
-      decoded = await _loadFromAsset();
     }
 
+    final decoded = await _loadFromAsset();
+    return _decode(decoded);
+  }
+
+  /// Force loading exclusively from bundled asset, ignoring local storage.
+  Future<Set<Point<int>>> loadFromAssetOnly() async {
+    final decoded = await _loadFromAsset();
+    return _decode(decoded);
+  }
+
+  Future<List<dynamic>> _loadFromAsset() async {
+    final str = await rootBundle.loadString(_assetPath);
+    return jsonDecode(str) as List<dynamic>;
+  }
+
+  Set<Point<int>> _decode(List<dynamic> decoded) {
     final Set<Point<int>> result = {};
     for (var item in decoded) {
       try {
@@ -43,13 +56,7 @@ class ObstaclesRepository {
         // ignore malformed entries
       }
     }
-
     return result;
-  }
-
-  Future<List<dynamic>> _loadFromAsset() async {
-    final str = await rootBundle.loadString(_assetPath);
-    return jsonDecode(str) as List<dynamic>;
   }
 
   Future<void> save(Set<Point<int>> obstacles) async {

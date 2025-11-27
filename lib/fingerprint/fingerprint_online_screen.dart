@@ -51,6 +51,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
   final FingerprintMatcher _matcher = FingerprintMatcher();
   final MapController _mapController = MapController();
   static const String _memoryKey = 'memory';
+  bool _permissionRequestInProgress = false;
 
   bool _isScanning = false;
   bool _hasFloorAsset = false;
@@ -104,7 +105,14 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
 
   Future<void> _initialize() async {
     await _checkAsset();
-    final status = await Permission.locationWhenInUse.request();
+    if (_permissionRequestInProgress) return;
+    _permissionRequestInProgress = true;
+    PermissionStatus status;
+    try {
+      status = await Permission.locationWhenInUse.request();
+    } finally {
+      _permissionRequestInProgress = false;
+    }
     if (!status.isGranted) {
       if (!mounted) return;
       setState(() {
@@ -139,7 +147,8 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
       setState(() {
         _datasets = entries;
       });
-      final selectedExists = _selectedDatasetKey == _memoryKey ||
+      final selectedExists =
+          _selectedDatasetKey == _memoryKey ||
           entries.any((element) => element.key == _selectedDatasetKey);
       if (!selectedExists) {
         _onDatasetSelected(_memoryKey);
@@ -147,8 +156,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _statusMessage ??=
-            'No se pudieron cargar datasets guardados: $error';
+        _statusMessage ??= 'No se pudieron cargar datasets guardados: $error';
       });
     }
   }
@@ -266,9 +274,10 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
       _matcherResult = matcherResult;
       _estimatedPosition = matcherResult?.best.position;
       _selectedSample = matcherResult?.best ?? _selectedSample;
-      _statusMessage = matcherResult == null
-          ? 'Sin huellas para comparar.'
-          : 'Distancia k-NN: ${matcherResult.distance.toStringAsFixed(1)}';
+      _statusMessage =
+          matcherResult == null
+              ? 'Sin huellas para comparar.'
+              : 'Distancia k-NN: ${matcherResult.distance.toStringAsFixed(1)}';
       _isScanning = false;
 
       if (matcherResult != null &&
@@ -285,10 +294,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     });
   }
 
-  bool _hasSignificantChange(
-    Map<String, int> prev,
-    Map<String, int> current,
-  ) {
+  bool _hasSignificantChange(Map<String, int> prev, Map<String, int> current) {
     if (prev.length != current.length) return true;
     for (final entry in current.entries) {
       final prevValue = prev[entry.key];
@@ -422,30 +428,33 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
         actions: [
           IconButton(
             onPressed: _quickScanAndSelect,
-            icon: _isScanning
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    _isQuickMonitoring
-                        ? Icons.pause_circle
-                        : Icons.play_circle,
-                  ),
-            tooltip: _isQuickMonitoring
-                ? 'Detener monitoreo rapido'
-                : 'Monitoreo rapido (auto)',
+            icon:
+                _isScanning
+                    ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : Icon(
+                      _isQuickMonitoring
+                          ? Icons.pause_circle
+                          : Icons.play_circle,
+                    ),
+            tooltip:
+                _isQuickMonitoring
+                    ? 'Detener monitoreo rapido'
+                    : 'Monitoreo rapido (auto)',
           ),
           IconButton(
             onPressed: _performScan,
-            icon: _isScanning
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.wifi_find),
+            icon:
+                _isScanning
+                    ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.wifi_find),
             tooltip: 'Escanear ahora',
           ),
         ],
@@ -478,30 +487,33 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
             ),
             IconButton(
               onPressed: _quickScanAndSelect,
-              icon: _isScanning
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      _isQuickMonitoring
-                          ? Icons.pause_circle
-                          : Icons.play_circle,
-                    ),
-              tooltip: _isQuickMonitoring
-                  ? 'Detener monitoreo rapido'
-                  : 'Monitoreo rapido (auto)',
+              icon:
+                  _isScanning
+                      ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : Icon(
+                        _isQuickMonitoring
+                            ? Icons.pause_circle
+                            : Icons.play_circle,
+                      ),
+              tooltip:
+                  _isQuickMonitoring
+                      ? 'Detener monitoreo rapido'
+                      : 'Monitoreo rapido (auto)',
             ),
             IconButton(
               onPressed: _performScan,
-              icon: _isScanning
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.wifi_find),
+              icon:
+                  _isScanning
+                      ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Icon(Icons.wifi_find),
               tooltip: 'Escanear ahora',
             ),
             if (widget.onClose != null)
@@ -521,25 +533,25 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     final match = _matcherResult;
     final estimated = _estimatedPosition;
     final lastScan = _lastScan;
-    final scanList = lastScan
-        .map(
-          (ap) => ListTile(
-            dense: true,
-            leading: const Icon(Icons.network_wifi),
-            title:
-                Text(ap.ssid.isNotEmpty ? ap.ssid : 'Red oculta (${ap.bssid})'),
-            subtitle: Text(ap.bssid),
-            trailing: Text('${ap.level} dBm'),
-          ),
-        )
-        .toList();
+    final scanList =
+        lastScan
+            .map(
+              (ap) => ListTile(
+                dense: true,
+                leading: const Icon(Icons.network_wifi),
+                title: Text(
+                  ap.ssid.isNotEmpty ? ap.ssid : 'Red oculta (${ap.bssid})',
+                ),
+                subtitle: Text(ap.bssid),
+                trailing: Text('${ap.level} dBm'),
+              ),
+            )
+            .toList();
 
     if (widget.useExternalMap) {
       return ListView(
         padding: const EdgeInsets.all(16),
-        children: [
-          _buildDetails(match, scanList),
-        ],
+        children: [_buildDetails(match, scanList)],
       );
     }
 
@@ -561,11 +573,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
 
         return ListView(
           padding: const EdgeInsets.all(16),
-          children: [
-            map,
-            const SizedBox(height: 16),
-            details,
-          ],
+          children: [map, const SizedBox(height: 16), details],
         );
       },
     );
@@ -588,10 +596,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
               mapController: _mapController,
               options: MapOptions(
                 crs: const CrsSimple(),
-                initialCenter: LatLng(
-                  height / 2,
-                  width / 2,
-                ),
+                initialCenter: LatLng(height / 2, width / 2),
                 initialZoom: 1,
                 minZoom: -2,
                 maxZoom: 6,
@@ -618,7 +623,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
                       color: Colors.blue.withOpacity(0.05),
                       borderStrokeWidth: 2,
                       borderColor: Colors.blueGrey,
-                    )
+                    ),
                   ],
                 ),
                 MarkerLayer(
@@ -671,10 +676,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     );
   }
 
-  Widget _buildDetails(
-    FingerprintMatcherResult? match,
-    List<Widget> scanList,
-  ) {
+  Widget _buildDetails(FingerprintMatcherResult? match, List<Widget> scanList) {
     final samples = _activeSamples;
     return Card(
       child: Padding(
@@ -727,10 +729,7 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Text(
-              'Estado',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('Estado', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(_statusMessage ?? 'Listo para escanear.'),
             const SizedBox(height: 8),
@@ -764,30 +763,31 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
             const Divider(height: 16),
             SizedBox(
               height: 160,
-              child: samples.isEmpty
-                  ? const Center(child: Text('No hay huellas.'))
-                  : ListView.builder(
-                      itemCount: samples.length,
-                      itemBuilder: (context, index) {
-                        final sample = samples[index];
-                        final selected = identical(sample, _selectedSample);
-                        return ListTile(
-                          dense: true,
-                          selected: selected,
-                          selectedTileColor:
-                              Theme.of(context).colorScheme.primaryContainer,
-                          onTap: () => _selectSample(sample),
-                          title: Text(
-                            'X=${sample.position.longitude.toStringAsFixed(2)} · Y=${sample.position.latitude.toStringAsFixed(2)}',
-                          ),
-                          subtitle: Text(
-                            'RSSI: ${sample.rssiByBssid.length} puntos · ${sample.timestamp.toLocal()}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      },
-                    ),
+              child:
+                  samples.isEmpty
+                      ? const Center(child: Text('No hay huellas.'))
+                      : ListView.builder(
+                        itemCount: samples.length,
+                        itemBuilder: (context, index) {
+                          final sample = samples[index];
+                          final selected = identical(sample, _selectedSample);
+                          return ListTile(
+                            dense: true,
+                            selected: selected,
+                            selectedTileColor:
+                                Theme.of(context).colorScheme.primaryContainer,
+                            onTap: () => _selectSample(sample),
+                            title: Text(
+                              'X=${sample.position.longitude.toStringAsFixed(2)} · Y=${sample.position.latitude.toStringAsFixed(2)}',
+                            ),
+                            subtitle: Text(
+                              'RSSI: ${sample.rssiByBssid.length} puntos · ${sample.timestamp.toLocal()}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        },
+                      ),
             ),
             const SizedBox(height: 16),
             Text(
@@ -797,9 +797,10 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
             const Divider(height: 20),
             SizedBox(
               height: 220,
-              child: scanList.isEmpty
-                  ? const Center(child: Text('Sin redes detectadas.'))
-                  : ListView(children: scanList),
+              child:
+                  scanList.isEmpty
+                      ? const Center(child: Text('Sin redes detectadas.'))
+                      : ListView(children: scanList),
             ),
           ],
         ),
@@ -818,7 +819,9 @@ class _FingerprintOnlineScreenState extends State<FingerprintOnlineScreen> {
     if (!mounted) return;
     if (_selectedDatasetKey == _memoryKey) {
       setState(() {
-        _activeSamples = List<FingerprintSample>.from(widget.repository.samples);
+        _activeSamples = List<FingerprintSample>.from(
+          widget.repository.samples,
+        );
       });
     }
   }
@@ -849,9 +852,10 @@ class _DatasetInfo {
 
   String get displayName {
     final count = samples.length;
-    final dateLabel = generatedAt != null
-        ? ' · ${generatedAt!.toLocal().toString().split('.').first}'
-        : '';
+    final dateLabel =
+        generatedAt != null
+            ? ' · ${generatedAt!.toLocal().toString().split('.').first}'
+            : '';
     return '$name ($count huellas)$dateLabel';
   }
 }
@@ -864,8 +868,9 @@ class _MatchDetails extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sample = match.best;
-    final entries = sample.rssiByBssid.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final entries =
+        sample.rssiByBssid.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
